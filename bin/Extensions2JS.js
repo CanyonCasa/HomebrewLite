@@ -317,6 +317,18 @@ if (!bound) var bound = function(min,val,max,dflt) {
   return val;
 };
 
+// provide('abc.def.ghi') ==> guaranttes existance of abc = { def: { ghi: {} } }, but does not override it, if it exists
+provide = provide || 
+  function provide(identifier) {
+    var x = this;
+    var y = identifier.split('.');
+    while (y.length>0) {
+      x[y[0]] = x[y[0]] || {};
+      x = x[y[0]];
+      y.shift();
+    };
+  }
+ 
 // shortcuts for converting to/from JSON...
 if (!Object.asJx) {
   Object.defineProperty(Object.prototype,'asJx', {

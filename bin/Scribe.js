@@ -30,11 +30,11 @@ var level = {
   warn:  {txt: "WARN ", rank: 5, style: ['yellow','bold']},
   error: {txt: "ERROR", rank: 6, style: ['red','bold']},
   fatal: {txt: "FATAL", rank: 7, style: ['redBG','white','bold']},
-  flush: {txt: "FLUSH", rank: 8, style: ['cyan']}, // 'flush' always writes transcript
+  flush: {txt: "FLUSH", rank: 8, style: ['cyanBG','black']}, // 'flush' always writes transcript
 };
 
 // color styling function (applys only to console)...
-var asStyle = (lvl, txt) => { level[lvl].style.forEach(function(s) { txt = colors[s](txt); }); return txt; };
+var asStyle = (lvl='log', txt='') => { level[lvl].style.forEach(function(s) { txt = colors[s](txt); }); return txt; };
 
 // constructor for Scribe class...
 module.exports = Scribe = function Scribe(cfg={}) {
@@ -44,25 +44,26 @@ module.exports = Scribe = function Scribe(cfg={}) {
   this.mask = cfg.mask || cfg.parent.mask || 'log';
   // transcript object attributes include: file, level, bsize, and fsize; defaults below...
   // buffering (i.e. bsize>0) will reduce file I/O, but may lose data on exit.
-  this.transcript = Object.assign({file: "../logs/"+this.tag+'.log', fsize: 500000, buffer:'', bsize: 10000, busy: false},cfg.transcript);
-  this.log("Scribe initialized for %s",this.tag.toUpperCase());
+  this.transcript = Object.assign({file: "../logs/"+this.tag+'.log', fsize: 200000, buffer:'', bsize: 10000, busy: false},cfg.transcript);
+  this.log("Scribe initialized for %s [%s]",this.tag.toUpperCase(),this.parent?'-/-':this.transcript.fsize+'/'+this.transcript.bsize);
 };
 
 // function to write output to rolling transcript file
-Scribe.prototype.saveTranscript = function saveTranscript(ready) {
+Scribe.prototype.saveTranscript = function saveTranscript(flag) {
   if (this.transcript.busy) return; // already in process of saving transcript
-  if (ready) {  // transcript file overflow checked
+  if (flag==='ready') {  // transcript file overflow checked
     let tmp = this.transcript.buffer;
     this.transcript.buffer = '';
     fs.writeFile(this.transcript.file,tmp,{encoding:'utf8',flag:'a'},(e)=>{if (e) console.log('ERROR: can not write to transcript...');});
   } else {
     this.transcript.busy = true;
     fs.stat(this.transcript.file, (err, stats) => {     // stats undefined if file not found...
-      if (stats && stats.size>this.transcript.fsize) {  // roll transcript...
+      if ((flag===true) || (stats && stats.size>this.transcript.fsize)) {  // roll transcript on flush or filesize...
         let dx = new Date().toISOString().split(':').join('');
         let parts = path.parse(this.transcript.file);
         let bak = path.normalize(parts.dir + '/' + parts.name +'-' + dx + parts.ext);
         fs.rename(this.transcript.file,bak,(e)=>{
+          this.debug("Rolling log: %s [%s]",bak,stats.size);
           this.transcript.busy = false;
           this.saveTranscript('ready');
         });
@@ -82,7 +83,7 @@ Scribe.prototype.streamToTranscript =  function streamToTranscript(line,flush) {
   };
   if (this.transcript.file) { // instance level transcripting if its log file defined...
     this.transcript.buffer += line+((flush)?'\n':''); // extra linefeed if flushing to "paginate" log file.
-    if ((this.transcript.buffer.length>this.transcript.bsize) || flush) this.saveTranscript();
+    if ((this.transcript.buffer.length>this.transcript.bsize) || flush) this.saveTranscript(flush);
   };
   // otherwise scripting not saved to transcript file!
 };
