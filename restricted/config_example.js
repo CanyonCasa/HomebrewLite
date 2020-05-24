@@ -54,9 +54,7 @@ var cfg = {
         files: {// secure sockets files
           key: '/home/js/restricted/privkey.pem',
           cert: '/home/js/restricted/fullchain.pem'
-//          cert: '/home/js/restricted/cert.pem'
-          },
-        renew: 'HTTPS'
+          }
         },
       sites:['shop','sc','talk','eyes','red']
       }

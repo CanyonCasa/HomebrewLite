@@ -1,0 +1,38 @@
+{
+  "name": "hblite",
+  "version": "1.0.0",
+  "description": "HomebrewLite",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "Homebrew",
+    "Lite",
+    "webserver",
+    "JSON"
+  ],
+  "author": "CanyonCasa",
+  "license": "MIT",
+  "dependencies": {
+    "base64url": "^3.0.1",
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^1.18.3",
+    "colors": "^1.4.0",
+    "compression": "^1.7.4",
+    "emailjs": "^2.2.0",
+    "express": "^4.16.4",
+    "express-fileupload": "^1.1.6",
+    "http-proxy": "^1.18.1",
+    "jsonata": "^1.8.3",
+    "jsonwebtoken": "^8.5.1",
+    "line-reader": "^0.4.0",
+    "microseconds": "^0.2.0",
+    "node-forge": "^0.9.1",
+    "twilio": "^3.43.0"
+  },
+  "devDependencies": {}
+}

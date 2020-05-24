@@ -28,4 +28,4 @@ process.on('uncaughtException',
   }
 );
 
-module.exports = init = (cb)=>{cleanup.callback=cb||null; return cleanup;};
+module.exports = init = (cb)=>{cleanup.callback=cb||cleanup.callback; return cleanup;};
