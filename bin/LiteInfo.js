@@ -21,7 +21,6 @@ require('./Extensions2JS');
 
 exports = module.exports = Info = function Info(options) {
   // this function called by express app to initialize middleware...
-  var authorize = options.authorize || [];
   var site = this;          // local reference for context
   var scribe = site.scribe; // local reference
   scribe.info("Middleware '%s' initialized with route: %s", options.code, options.route);
@@ -64,7 +63,7 @@ exports = module.exports = Info = function Info(options) {
     // first lookup recipe based on parameter provided
     scribe.trace("INFO[%s]: %s", rqst.method, rqst.params.info);
     if (rqst.method!='GET') return next(501);
-    let ok = rqst.hb.auth.authorize(authorize);
+    let ok = rqst.hb.auth.authorize(['admin','info']);
     let info = {};
     switch (rqst.params.info) {
       case 'ip': info = getIP(rqst); break;

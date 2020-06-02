@@ -3,8 +3,6 @@
  (c) 2020 Enchanted Engineering, MIT license
 */
 
-path = require('path');
-
 ///************************************************************
 /// Array Object Extensions...
 ///************************************************************
@@ -78,7 +76,7 @@ if (!Date.prototype.style) Date.prototype.style = function(frmt,local) {
 };
 
   
-  ///************************************************************
+///************************************************************
 /// Number Object Extensions...
 ///************************************************************
 if (Number.isOdd===undefined) Number.isOdd = (n) => n % 2 ? true : false;
@@ -87,13 +85,6 @@ if (Number.isEven===undefined) Number.isEven = (n) => !Number.isOdd(n);
 ///************************************************************
 /// Object Extensions...
 ///************************************************************
-// following done as non-enumerable definitions to not break "for in" loops
-// make object keys iterable to work in for-of-loops like arrays
-Object.prototype[Symbol.iterator] = function () {
-  var keys = Object.keys(this); var index = 0;
-  return { next: () => index<keys.length ? {value: keys[index++], done: false} : {done: true} };
-}
-
 // object equivalent of Array.prototype.map - calls user function with value, key, and source object
 if (!Object.mapByKey) Object.defineProperty(Object.prototype,'mapByKey', {
   value: 
@@ -106,7 +97,7 @@ if (!Object.mapByKey) Object.defineProperty(Object.prototype,'mapByKey', {
   enumerable: false
 })
 
-// recursively mergekeys the keys of an object into an existing objects with mergedkeys object having precedence
+// recursively mergekeys the keys of an object into an existing objects with merged object having precedence
 if (!Object.mergekeys) Object.defineProperty(Object.prototype,'mergekeys', {
   value: 
     function(merged={}) {
@@ -150,6 +141,7 @@ if (!String.prototype.toRegExp) Object.defineProperty(String.prototype,'toRegExp
 /// General Extensions...
 ///*************************************************************
 // function to correctly join an array of path parts into a valid path...
+let path = require('path');
 if (!global.resolveURL) global.resolveURL =  (...args)=>args.join('/').replace(/\/{2,}/g,'/').replace(/:\//,'://');
 if (!global.resolvePath) global.resolvePath = (...args)=>path.resolve(args.join('/'));
 

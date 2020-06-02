@@ -30,8 +30,8 @@ const fsp = require('fs').promises;
 const util = require('util');
 var lineReader = require('line-reader');
 var forEachLine = util.promisify(lineReader.eachLine);
-const frmt = require('util').format;  // returns same result as console.log for arguments
-var jsonata = require('jsonata');
+const frmt = util.format;  // returns same result as console.log for arguments
+const jsonata = require('jsonata');
 const safeJSON = require('./SafeData').jsonSafe;
 
 module.exports = jxjDB = function jxjDB(cfg={},data) {
@@ -50,7 +50,7 @@ jxjDB.prototype.log = function log() {
   let msg = frmt.apply(this,arguments)+'\n';
   fsp.appendFile(this.logFile,msg,'utf8')
     .then()
-    .catch(e=>console.log("Error[jxjDB.log] => %s : %s",msg,e.toString()));
+    .catch(e=>console.log("jxjDB.log ERROR => %s : %s",msg,e.toString()));
 };
 
 // load database file into memory.
@@ -95,27 +95,6 @@ jxjDB.prototype.lookup = function lookup(recipeName) {
   return Object.assign({},jsonata(`_.recipes[name="${recipeName}"]`).evaluate(this.db)||{});
 };
 
-// resolve jsonata expression bindings...
-jxjDB.prototype.resolveExpression = function resolveExpression(expression,bindings=[]) {
-  if (typeof expression=='object') {
-    if (verifyThat(bindings,'isTrueObj')) {
-      for (let k in bindings) { expression.assign(k,bindings[k]) };
-      return expression;
-    };
-  } else if ((typeof expression=='string') && expression.length) {
-    if (verifyThat(bindings,'isTrueObj')) {
-      return this.resolveExpression(jsonata(expression),bindings);
-    } else {
-      let expr = expression;
-      let bx = bindings instanceof Array ? bindings : bindings!==undefined ? [bindings] : [];
-      while (expr.includes('?')) expr = expr.replace('?',bx.shift()||'');
-      return jsonata(expr);
-    };
-  } else {
-    return null;
-  };
-};
-
 // reference function to check database request authorization...
 // pass if allowed undefined; otherwise allowed defines a list of groups permitted access
 // auth can be a boolean or group name or group list
@@ -129,65 +108,75 @@ jxjDB.prototype.authorizationCheck = function(allowed,auth) {
 // auth is a boolean, group name (string), or group list (array)
 // both recipe lookup and authorization can be done inside or outside query
 // returns data or undefined (no recipe) or null, but never error condition...
-jxjDB.prototype.query = function query(recipeSpec, bindings=[], auth=false) {
+jxjDB.prototype.query = function query(recipeSpec, bindings=null, auth=false) {
   let recipe = typeof recipeSpec=='string' ? this.lookup(recipeSpec) : recipeSpec; // pass recipe object or name
   if (recipe.name) {
     let authorized = this.authorizationCheck(recipe.auth,auth);
     if (authorized) { 
       try {
-        let tmp = recipe.empty || {};
-        let jexpr = this.resolveExpression(recipe.expression,bindings);
-        if (jexpr) {
-          tmp = jexpr.evaluate(this.db);
-          if (!(tmp==null)) {
-            tmp = JSON.parse(JSON.stringify(tmp));  // workaround -> returns by reference without this!
-            if (tmp instanceof Array) {
-              if (recipe.limit && (tmp.length>Math.abs(recipe.limt))) tmp = (recipe.limit<0) ? tmp.slice(recipe.limit) : tmp.slice(0,recipe.limit);
-              if (recipe.header) tmp.unshift(recipe.header);
-            };
+        let tmp = jsonata(recipe.expression).evaluate(this.db,bindings);
+        if (verifyThat(tmp,'isDefined')) {
+          tmp = JSON.parse(JSON.stringify(tmp || recipe.empty || {}));  // workaround -> returns by reference without this!
+          if (tmp instanceof Array) {
+            if (recipe.limit && (tmp.length>Math.abs(recipe.limt))) tmp = (recipe.limit<0) ? tmp.slice(recipe.limit) : tmp.slice(0,recipe.limit);
+            if (recipe.header) tmp.unshift(recipe.header);
           };
-        };
         return tmp;
-      } catch (e) { this.log("JSON.query ERROR: ",e.toString()); };
+        };
+      } catch (e) { this.log("jxjDB.query ERROR: ",typeof e=='object'?e.message:e.toString()); return undefined; };
     };
-  } else
-    return undefined;
-  return null;
+  };
+  return recipe.empty || {};
 };
 
 // simple database edit...
 // recipeSpec defines recipe.name or actual recipe object
-// ref refers to index of change; null for new entry
-// data to be saved in record, undefined to delete record; note: full record replacement,
+// data defines an array of objects/arrays in form [{ref:<value>, record:<record_object>},...] or [[<value>,<record_object>],...]
+//   ref refers to unique matching value for an existing entry based on recipe 'unique' lookup; null for new entry
+//   record refers to data to be saved, undefined/null to delete record; note: full record replacement after merge with defaults and existing,
 // auth is a boolean, group name (string), or group list (array)
 // both recipe lookup and authorization can be done inside or outside query
 // returns data or undefined (no recipe) or null, but never error condition...
-jxjDB.prototype.modify = function modify(recipeSpec, data, auth=false, ref=null) {
+jxjDB.prototype.modify = function modify(recipeSpec, data, auth=false) {
   let recipe = typeof recipeSpec=='string' ? this.lookup(recipeSpec) : recipeSpec; // pass recipe object or name
   if (recipe.name) {
     let authorized = this.authorizationCheck(recipe.auth,auth);
     if (authorized) {
-      if (data===undefined) {
-        if (ref) delete this.db[recipe.collection][ref];
-      } else {
-        let safeData = safeJSON(data,recipe.filter||'*');
-        if (ref===null) {
-          this.db[recipe.collection].push(safeData);
-          ref = this.db[recipe.collection].length -1;
-        } else {
-          if (verifyThat(this.db[recipe.collection][ref],'isTrueObj') && verifyThat(safeData,'isTrueObj')) {
-            this.db[recipe.collection][ref].mergekeys(safeData);
-          } else {
-            this.db[recipe.collection][ref] = safeData;
-          };
+      if (verifyThat(data,'isArrayOfObjects') || verifyThat(data,'isArrayOfArrays')) {
+        let results = [];
+        let defaults = this.defaults(recipe.collection) || {};
+        for (let d of data) {
+          try {
+            let ref = d.ref || d[0] || '';
+            let record = safeJSON(d.record || d[1] || null,recipe.filter);
+            let existing = (recipe.reference ? jsonata(recipe.reference).evaluate(this.db,{ref:ref}) : null) || {index:null,record:defaults};
+            if (verifyThat(record,'isDefined')) {
+              let newRecord = defaults instanceof Array ? record : ({}).mergekeys(existing.record).mergekeys(record);
+              if (existing.index===null) {  // add new record
+                this.db[recipe.collection].push(newRecord);
+                results.push(["add",ref,this.db[recipe.collection].length-1]);
+              } else {  // change existing record
+                this.db[recipe.collection][existing.index] = newRecord;
+                results.push(["change",ref,existing.index]);
+              };
+              this.changed(); // flag changes for save
+            } else {
+              if (existing.index!==null) this.db[recipe.collection].splice(existing.index,1); // delete record
+              this.changed(); // flag changes for save
+              results.push(["delete",ref,existing.index]);
+            };
+          } catch(e) {this.log("jxjDB.modify ERROR: ",typeof e=='object'?e.message:e.toString()); results.push(e.toString())};
         };
+        return results; // array of pass/fail boolean for each data record.
+      } else {
+        this.log("jxjDB.modify bad request data format!"); 
+        return null;
       };
-      this.changed(); // flag changes for save
-      return ref;
+    } else {
+      return undefined;
     };
-  } else {
-    return undefined;
   };
+  this.log("jxjDB.modify bad recipe!:",recipeSpec); 
   return null;
 };
 
@@ -201,7 +190,7 @@ jxjDB.prototype.inquire = async function inquire(recipeSpec, bindings=[], auth=f
       if (recipe.xjson) {
         try {
           let tmp = [];
-          let expression = this.resolveExpression(recipe.expression,bindings);
+          ///let expression = this.resolveExpression(recipe.expression,bindings);
           if (expression) {
             await forEachLine(recipe.xjson,(line)=>{  // read xjson file line by line
               let jObj = JSON.parse(line);            // parse into JS object
@@ -235,7 +224,7 @@ jxjDB.prototype.inquire = async function inquire(recipeSpec, bindings=[], auth=f
 
 // database edit function with support for both JSON and Extensible JSON database queries...
 // Calls modify for JSON databases; ONLY appends to data file for Extensible JSON...
-jxjDB.prototype.cache = async function cache(recipeSpec, data, auth=false, ref=null) {
+jxjDB.prototype.cache = async function cache(recipeSpec, data, auth=false,flag=null) {
   let recipe = typeof recipeSpec=='string' ? this.lookup(recipeSpec) : recipeSpec; // pass recipe object or name
   if (recipe.name) {
     let authorized = this.authorizationCheck(recipe.auth,auth);
@@ -245,8 +234,8 @@ jxjDB.prototype.cache = async function cache(recipeSpec, data, auth=false, ref=n
           try {
             // convert array of objects (or arrays) into a block of filtered lines.
             let blk = data.map(x=>JSON.stringify(safeJSON(x,recipe.filter))).join('\n')+'\n';
-            let flag = ref ? 'w' : 'a'; // default append
-            await fsp.writeFile(recipe.xjson,blk,{flag:flag});
+            let flag = ref ? 'w' : 'a'; 
+            await fsp.writeFile(recipe.xjson,blk,{flag:flag?'w':'a'});// default append
             return {data: data, blk:blk, flag: flag};
           } catch (e) {
             this.log(`Error[${recipe.name}] XJSON Failure: ${e}`);
@@ -257,7 +246,7 @@ jxjDB.prototype.cache = async function cache(recipeSpec, data, auth=false, ref=n
           throw 400;
         };
       } else {
-        return this.modify(recipe,data,auth,ref);
+        return this.modify(recipe,data,true)||[];
       };
     } else {
       this.log(`Error[${recipe.name}]: User authorization failed.`);

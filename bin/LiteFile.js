@@ -74,7 +74,7 @@ exports = module.exports = Data = function Data(options) {
           let fx = data[f].encoding=='base64' ? new Buffer.from(data[f].contents,'base64') : data[f].contents;
           await fsp.writeFile(path,fx);
           dx.push(true);
-        } catch (e) { $(e); dx.push(false); };
+        } catch (e) { scribe.debug(e); dx.push(false); };
       };
       return {data:dx}
     } else {

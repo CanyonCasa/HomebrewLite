@@ -23,15 +23,40 @@ const Scribe = require('./Scribe');                 // transcripting
 const Auth = require('./hbLiteAuth');               // authentication and authorization
 var jxjDB = require('./jxjDB');                     // JSON database
 
+const HANDLERS = {  // default handlers and routes...
+  LiteData: {   // database API support
+    tag: 'data',          // transcript tag
+    code: './LiteData',   // code loaded for handler
+    route: '/\\$:recipe(\\w+)/:opt1?/:opt2?/:opt3?/:opt4?/:opt5?', // traffic route
+    db: 'site'            // required database, referencing site database defined above.
+  },
+  LiteFile: {   // file upload/download API support
+    tag: 'file',          // transcript tag
+    code: './LiteFile',   // code loaded for handler
+    route: '/\\~:recipe(\\w+)/:opt?', // traffic route
+    db: 'site'
+  },
+  LiteAction: {   // action API support
+    tag: 'action',        // transcripting tag
+    code: './LiteAction', // code loaded for handler
+    route: '/\\@:action(\\w+)/:opt1?/:opt2?/:opt3?' // traffic route
+  },
+  LiteInfo: {   // info API support
+    tag: 'info',          // transcripting tag
+    code: './LiteInfo',   // code loaded for handler
+    route: '/\\!:info(\\w+)' // traffic route
+  }
+};
+
 // constructor for flexible site application based on user configuration...
 module.exports = Site = function Site(context) {
   // homebrew server level items under context key server: db, emsg, headers, scribe (i.e. parent scribe)
   // site specific configuration under context.proxy, context.cfg, and context.tag, to override server
   // middleware added context keys include: xApp
-  for (let key of context) this[key] = context[key];  // save server/site context (without introducing another level of hierarchy)
+  for (let key in context) this[key] = context[key];  // save server/site context (without introducing another level of hierarchy)
   this.scribe = new Scribe({tag: context.tag, parent: context.server.scribe});  // local scribe linked to server parent
   this.db = context.server.db;  // inherit default databases from server
-  for (let d of (context.cfg.databases||{})) { // optionally override or add local databases
+  for (let d in (context.cfg.databases||{})) { // optionally override or add local databases
     this.scribe.trace(`Creating and loading '${d}' database (file: ${context.cfg.databases[d].file}) ...`);
     this.db[d] = new jxjDB(context.cfg.databases[d]);
     this.db[d].load()
@@ -61,11 +86,11 @@ module.exports = Site = function Site(context) {
     };
     let codex = { code: c, iat: new Date().valueOf()/1000|0, exp: expires, type: code }
     if (user===null) return codex;  // only generate, don't assign to user
-    let u = uDB.query('userIndexByUsername',user,true);
+    let u = uDB.query('userByUsername',{name: user},true);
     if (verifyThat(u,'isNotEmpty')) {
-      u.record.credentials.code = codex;
-      uDB.modify('changeUser',u.record,true,u.index);
-      return u.record.credentials.code;
+      u.credentials.code = codex;
+      uDB.modify('changeUser',[[user,u]],true);
+      return u.credentials.code;
     };
     return undefined; // invalid user specified
   };
@@ -83,7 +108,7 @@ module.exports = Site = function Site(context) {
       sms.body = (msg.hdr || ((sms.id||sms.timestamp) ? sms.id+sms.timestamp+':\n' : '')) + msg.text;
       // map recipients, group ot to "users and/or numbers" to prefixed numbers...
       let list = ([recipients,msg.group,msg.to].filter(n=>n).toString()||twilioCfg.to).split(',');
-      let phoneBook = uDB.query('phones',[],true);
+      let phoneBook = uDB.query('phones',{ref:'.+'},true);
       sms.numbers = list.map(n=>prefix(isNaN(n)?phoneBook[n]:n)).filter(n=>n).filter((v,i,a)=>a.indexOf(v)==i);
       sms.from = prefix(twilioCfg.number);
       // process sms requests...
@@ -108,7 +133,7 @@ module.exports = Site = function Site(context) {
       msg.id = msg.id || emailCfg.name || ''; // format optional header with id and/or time
       msg.timestamp = msg.time ? '['+new Date().toISOString()+']' : '';
       msg.body = (msg.hdr || ((msg.id||msg.timestamp) ? msg.id+msg.timestamp+':\n' : '')) + msg.text;
-      let addressBook = uDB.query('emails',[],true);
+      let addressBook = uDB.query('emails',{ref:'.+'},true);
       let mail = {};
       ['to','cc','bcc'].forEach(addr=>{  // resolve email addressing
          let tmp = msg[addr] instanceof Array ? msg[addr] : typeof msg[addr]=='string' ? msg[addr].split(',') : [];
@@ -149,10 +174,10 @@ Site.prototype.builtin = function builtin(mwName) {
       };
     case 'auth':    // authentication
       return function authMiddleware(rqst,rply,next){
-        self.auth.authenticate(rqst.headers.authorization,(u)=>uDB.query('userByUsername',u,true))
+        self.auth.authenticate(rqst.headers.authorization,(u)=>uDB.query('userByUsername',{name: u},true))
           .then(a => {
             rqst.hb.auth = a; // assign authorization object to request
-            if (a.authenticated) rply.header('Authorization',a.jwt);
+            if (a.authenticated) rply.header('Authorization',"Bearer "+a.jwt);
             if (a.error) {
               rply.json(self.server.emsg(401,a.error));
             } else {
@@ -163,11 +188,10 @@ Site.prototype.builtin = function builtin(mwName) {
       };
     case 'user':    // user management
       return function userMiddleware(rqst,rply,next){
-        let admin = (rqst.hb.auth.user.member||[]).includes('admin');
-        let selfAuth = rqst.params.user && (rqst.params.user==rqst.hb.auth.user.username); // user authenticated as self
+        let admin = rqst.hb.auth.authorize(['admin','manager']);
         if (rqst.method=='GET') {
-          if (rqst.params.code) { // GET /user/<username>/<code> --> assign user an activation code (no auth)
-            let code = self.generateCode('code',rqst.params.user);
+          if (rqst.params.action==='code') {  // GET /user/code/<username>
+            let code = self.generateCode('code',rqst.params.user||'');
             if (verifyThat(code,'isNotEmpty')) {
               // text/mail code to user ...
               let text = `Challenge code:\n  user: ${rqst.params.user}\n  code: ${code.code}`;
@@ -195,48 +219,44 @@ Site.prototype.builtin = function builtin(mwName) {
             } else {
               next(400);
             };
-          } else {  // GET /user or /user/<username> --> return a user or all users...
-            if (!admin || !selfAuth) return next(401);
-            let pattern = rqst.params.user ? `[][username='${rqst.params.user}']` : ''; // logically only admin can list all
-            let users = uDB.query('usersList',pattern,admin||selfAuth)||[];
-            users.map(v=>delete v.credentials); // return "snaitized" user data only
-            rply.json(users);
+          } else {  // GET /user/emails|groups|id|list|phones/[<username>]
+            let selfAuth = !!(rqst.params.user && (rqst.params.user===rqst.hb.auth.user.username)); // user authenticated as self
+            let auth = [].concat(rqst.hb.auth.user.member).concat(selfAuth);
+            let bindings = {ref: rqst.params.user||'.+'}; // logically, will always be 'user' when selfAuth==true 
+            let uData = uDB.query(rqst.params.action,bindings,auth);
+            if (uData) { rply.json(uData); } else { next(400); };
           };
         } else if (rqst.method=='POST') { // create,activate, or update 1 or more user records
-          if (rqst.params.code) { // POST /user/<username>/<code> -> validate code, activate user, no auth since user not ACTIVE...
-            let who = uDB.query('userIndexByUsername',rqst.params.user,true);
-            if (verifyThat(who,'isNotEmpty') &&  self.auth.codeCheck(rqst.params.code,who.record.credentials.code)) {
-              if (who.record.status=='PENDING') {
-                who.record.status = 'ACTIVE';
-                uDB.modify('changeUser',who.record,true,who.index);
+          if (rqst.params.action==='code') { // POST /user/code/<username>/<code> -> validate code, activate user
+            let who = uDB.query('userByUsername',{name: rqst.params.user||''},true);  // no auth since user not ACTIVE...
+            if (verifyThat(who,'isNotEmpty') &&  self.auth.codeCheck(rqst.params.opt,who.credentials.code)) {
+              if (who.status=='PENDING') {
+                who.status = 'ACTIVE';
+                uDB.modify('changeUser',[[who.username,who]],true);
               };
-              rply.json({msg: `Status: ${who.record.status}`});
+              rply.json({msg: `Status: ${who.status}`});
             } else {
               next(400);
             };
-          } else {  // POST /user/<username> -> user change request...
-            let data = [];
-            let users = rqst.body;
-            if (verifyThat(users,'isArrayOfObjects')) {
+          } else if (rqst.params.action==='change') { // POST /user/change/[<username>]
+            if (!(verifyThat(rqst.body,'isArrayOfObjects')||verifyThat(rqst.body,'isArrayOfArrays'))) return next(400);
+            let data = rqst.body;
+            if (rqst.params.user) { // self change, build a safe record
+              let changes = rqst.body[0].record || rqst.body[0][0];
+              if (!verifyThat(changes,'isTrueObject')||(changes.username!=rqst.params.user)) return next(400);
               const DEFAULTS = uDB.defaults('users');  // default user entry
-              users.forEach(u=>{  // process each given user
-                let entry = uDB.query('userIndexByUsername',u.username||'',true);
-                if (admin || (entry===undefined) || (u.username && (u.username==rqst.hb.auth.user.username))) { // user authenticated (for each entry) as self or admin 
-                  let newEntry = Object.assign({},DEFAULTS,entry?entry.record:{},u);
-                  if (!admin) { // but only admin can change certain fields
-                    newEntry.member = (entry ? entry.record.member : DEFAULTS.member).slice();
-                    newEntry.status = entry ? entry.record.status : DEFAULTS.status;
-                  };
-                  let ref = uDB.modify('changeUser',newEntry,true,entry?entry.index:null);
-                  data.push(ref);
-                } else {
-                  data.push(false);
-                };
-              });
-            } else {
-              next(400);
+              let existing = uDB.query('userByUsername',{name: rqst.params.user},true);
+              let selfData = ({}).mergekeys(DEFAULTS).mergekeys(existing?existing:{}).mergekeys(changes);
+              selfData.member = (existing ? existing.member : DEFAULTS.member).slice(); // can't change own membership
+              selfData.status = existing ? existing.status : DEFAULTS.status;           // can't change own status
+              rply.json(uDB.modify('changeUser',[{ref:rqst.params.user,record:selfData}],true)||[]);
+            } else {  // administrative change
+              rply.json(uDB.modify('changeUser',rqst.body,rqst.hb.auth.user.member)||[]);
             };
-            rply.json(data);
+          } else if (rqst.params.action==='groups') { // POST /user/groups
+            rply.json(uDB.modify('groups',rqst.body,rqst.hb.auth.user.member)||[]);
+          } else {
+            next(400);
           };
         } else {
           next(501);
@@ -244,7 +264,8 @@ Site.prototype.builtin = function builtin(mwName) {
       };
     case 'login':   // user login response
       return function loginMiddleware(rqst,rply,next){
-        rply.json({jwt: rqst.hb.auth.jwt, error: rqst.hb.auth.error});
+        if (rqst.hb.auth.error) return next(emsg(401,rqst.hb.auth.error));
+        rply.json({jwt: rqst.hb.auth.jwt});
       };
     case 'mapURL':  // URL redirects and rewrites
       return function mapURLMiddleware(rqst,rply,next){
@@ -316,10 +337,12 @@ Site.prototype.build = function build() {
   this.xApp.use(this.builtin('mapURL'));  // handler to redirect and rewrite requests
   this.xApp.use(this.builtin('auth'));    // handler to authenticate users
   this.xApp.use('/login',this.builtin('login'));  // handler to respond to user login request
-  this.xApp.use('/user/:user?/:code?/:opt?',this.builtin('user'));  // handler for user management
+  this.xApp.use('/user/:action/:user?/:opt?',this.builtin('user'));  // handler for user management
   // static and custom middleware handlers...
   if (this.cfg.root) this.xApp.use(express.static(this.cfg.root));
-  (this.cfg.handlers||[]).forEach(h=>h.tag=='static' ? this.xApp.use(express.static(h.root)) : this.xApp.use(h.route,require(h.code).call(this,h)));
+  (this.cfg.handlers||[]).forEach(h=>{
+    (h in HANDLERS) ? this.xApp.use(HANDLERS[h].route,require(HANDLERS[h].code).call(this,HANDLERS[h])) :
+      (h.tag=='static') ? this.xApp.use(express.static(h.root)) : this.xApp.use(h.route,require(h.code).call(this,h)) });
   // request termination and error handling...
   this.xApp.use(this.builtin('terminate'));  // handler to redirect to secure site or throw default error since no handler replied; skipped if a real error occurs prior
   this.xApp.use(this.builtin('ErrorHandler')); // final error handler...

@@ -73,7 +73,7 @@ let server = {
   headers: {"x-powered-by": "Raspberry Pi Homebrew NodeJS Server "+cfg.VERSION}.mergekeys(cfg.headers),
   scribe: scribe
 };
-for (let d of cfg.databases) { // add any global (server) databases...
+for (let d in cfg.databases) { // add any global (server) databases...
   scribe.trace(`Creating and loading '${d}' database (file: ${cfg.databases[d].file}) ...`);
   server.db[d] = new jxjDB(cfg.databases[d]);
   server.db[d].load()
@@ -88,7 +88,7 @@ cfg.proxies.mapByKey((v,k,o)=>o[k].sites=v.sites.filter(s=>cfg.sites[s]));
 // prep each site configuration and start app for each proxied site that's defined...
 scribe.info("HomebrewLite site setups...");
 let sites = {};
-for (let p of cfg.proxies) {
+for (let p in cfg.proxies) {
   function proxy() { return proxies[p]; }; // serving proxy callback since not yet defined
   for (let s of cfg.proxies[p].sites) {
     let scfg = cfg.sites[s];  // site configuration shorthand reference
@@ -104,7 +104,7 @@ for (let p of cfg.proxies) {
 // define and start reverse proxy servers...
 scribe.info("HomebrewLite proxy setup...");
 let proxies = {};
-for (let p of cfg.proxies) {
+for (let p in cfg.proxies) {
   let pcfg = cfg.proxies[p];  // shorthand reference
   pcfg.tag = pcfg.tag || p;   // default tag to index value.
   scribe.debug("Creating proxy[%s] context...",pcfg.tag);
