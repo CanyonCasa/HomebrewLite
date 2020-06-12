@@ -314,6 +314,7 @@ Site.prototype.builtin = function builtin(mwName) {
           self.scribe.warn('OOPS[%s]: %s ==> (%s->%s) %s %s', ex.code, ex.msg, rqst.ip, rqst.hostname, rqst.method,rqst.originalUrl);
           self.scribe.Stat.inc(self.cfg.tag,ex.code);
           self.scribe.Stat.inc(self.cfg.tag,'errors');
+          self.scribe.Stat.inc(self.cfg.tag+'-blacklist-'+ex.code,rqst.ip);
           rply.status(ex.code).json(ex);
         } else {  // JavaScript/Node error...
           self.scribe.error('ERROR: %s %s (see transcript)', err.toString()||'?', ((err.stack||'').split('\n')[1]||'').trim());

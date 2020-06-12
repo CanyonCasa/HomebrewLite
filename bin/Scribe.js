@@ -53,8 +53,9 @@ var Stat = {
       if (key in stats[tag]) return stats[tag][key];
     };
     return undefined;
-  },  
+  },
   inc: (tag,key) => {
+    if (tag===undefined || key==undefined) return undefined;
     Stat.set(tag,key,(Stat.get(tag,key)) ? Stat.get(tag,key)+1 : 1);
     return Stat.get(tag,key);
   },

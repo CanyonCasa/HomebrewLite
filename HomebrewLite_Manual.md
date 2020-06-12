@@ -1,6 +1,6 @@
 # HomebrewLite Users Manual
 
-#### Keywords:	HomebrewLite, User's Manual, manual, API, configuration
+#### Keywords:  HomebrewLite, User's Manual, manual, API, configuration
 
 **_By Dave Campbell_**
 

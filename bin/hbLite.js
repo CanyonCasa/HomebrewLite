@@ -70,7 +70,7 @@ Cleanup(()=>{scribe.flush('Transcript closed')}); // adds process event handlers
 let server = {
   db: {},
   emsg: emsg, // standard error message object formatting used by proxies and servers
-  headers: {"x-powered-by": "Raspberry Pi Homebrew NodeJS Server "+cfg.VERSION}.mergekeys(cfg.headers),
+  headers: {"x-powered-by": "Raspberry Pi HomebrewLite NodeJS Server "+cfg.VERSION}.mergekeys(cfg.headers),
   scribe: scribe
 };
 for (let d in cfg.databases) { // add any global (server) databases...

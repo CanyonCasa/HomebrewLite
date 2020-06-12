@@ -99,7 +99,7 @@ Proxy.prototype.router = function router() {
   });
 
   return function proxyRouter(rqst, rply) {
-    let [host, method, url] = [rqst.headers.host.split(':')[0]||'', rqst.method, rqst.url];
+    let [host, method, url] = [(rqst.headers.host||'').split(':')[0], rqst.method, rqst.url];
     let route = self.cfg.routes[host] || self.cfg.routes['*.' + host.substr(host.indexOf('.')+1)];
     let ip = rqst.headers['x-forwarded-for']||rqst.connection.remoteAddress||'?';
     if (route) {
@@ -110,7 +110,7 @@ Proxy.prototype.router = function router() {
       let localIP = ip.match(/(?:192\.168|127\.\d+|10\.\d+|169\.254)\.\d+\.\d+$/);
       if (!localIP || self.cfg.verbose) { // ignore diagnostics for local addresses
         self.scribe.Stat.inc(self.tag,'probes');
-        self.scribe.Stat.inc('blacklist',ip);
+        self.scribe.Stat.inc(self.tag+'-blacklist',ip);
         self.scribe.dump("NO PROXY ROUTE[%d]: %s -> (%s) %s %s", self.scribe.Stat.get(self.tag,'probes'), host, ip, method, url);
       };
       rply.end(); // invalid routes close connection!
