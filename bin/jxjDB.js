@@ -96,10 +96,13 @@ jxjDB.prototype.lookup = function lookup(recipeName) {
 };
 
 // reference function to check database request authorization...
-// pass if allowed undefined; otherwise allowed defines a list of groups permitted access
-// auth can be a boolean or group name or group list
+// pass if allowed undefined; otherwise allowed defines a list (array or comma delimited string) of groups permitted access
+// auth can be a boolean, array, or comma delimited list
 jxjDB.prototype.authorizationCheck = function(allowed,auth) {
-  return (allowed===undefined) || (typeof auth=='boolean') ? auth : (typeof auth=='string'?[auth]:auth).some(g=>allowed.includes(g));
+  if (allowed===undefined) return true;
+  if (typeof auth=='boolean') return auth;
+  let granted = asList(allowed);
+  return asList(auth).some(a=>granted.includes(a));
 };
 
 // simple database query...
@@ -142,7 +145,7 @@ jxjDB.prototype.modify = function modify(recipeSpec, data, auth=false) {
   if (recipe.name) {
     let authorized = this.authorizationCheck(recipe.auth,auth);
     if (authorized) {
-      if (verifyThat(data,'isArrayOfObjects') || verifyThat(data,'isArrayOfArrays')) {
+      if (verifyThat(data,'isArrayOfAnyObjects')) {
         let results = [];
         let defaults = this.defaults(recipe.collection) || {};
         for (let d of data) {

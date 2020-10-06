@@ -25,13 +25,12 @@ const tls = require('tls');
 const forge = require('node-forge');
 var fsp = require('fs').promises;
 var url = require('url');
-var Scribe = require('./Scribe');
 
 module.exports = Proxy = function Proxy(context) {
   this.cfg = context.cfg;
   this.tag = context.tag;
   this.emsg = context.emsg;
-  this.scribe = new Scribe({tag:context.tag, parent: context.scribe}.mergekeys(context.cfg.scribe||{}));
+  this.scribe = context.scribe(context.tag);
   this.scribe.Stat.set(context.tag,undefined,{errors: 0, probes: 0, served: 0});
   this.proxy = httpProxy.createServer(context.cfg.options||{});
   this.initSecure(context.cfg.secure) // configure server security ...
@@ -60,9 +59,12 @@ Proxy.prototype.loadSecrets = async function (files) {
     this.secure.secrets = secrets;
     this.secure.changed = true;
     this.scribe.debug("Key/certificate files loaded...");
+    let now = new Date().toISOString();
     let exp = forge.pki.certificateFromPem(secrets.cert).validity.notAfter;
     this.scribe.info("Certificate valid until",exp);
-    return exp;
+    let info = {expires: exp, loaded: now, tag: this.tag};
+    this.scribe.Stat.set('proxy',this.tag,info);
+    return info;
   } catch (e) { 
     this.scribe.error("Secure Proxy[%s] key/certificate file '%s' error!",this.tag,f);
     this.scribe.error(e.toString());

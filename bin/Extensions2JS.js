@@ -3,15 +3,16 @@
  (c) 2020 Enchanted Engineering, MIT license
 */
 
-///************************************************************
+
+///*************************************************************
 /// Array Object Extensions...
-///************************************************************
+///*************************************************************
 // function to create and populate an array of given size and values, note value can even be a function
 if (!Array.makeArrayOf) Array.makeArrayOf = (size,value) => Array(size).fill().map((v,i,a)=>(typeof value=='function') ? value(v,i,a) : value);
 
-///************************************************************
+///*************************************************************
 /// Date Object Extensions...
-///************************************************************
+///*************************************************************
 // define a function for creating formated date strings
 // Date.prototype.style(<format_string>|'iso'|'form'[,'local'|'utc'])
 // formats a date according to specified string defined by ...
@@ -53,12 +54,12 @@ if (!Date.prototype.style) Date.prototype.style = function(frmt,local) {
   const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   let sign = String(local).toLowerCase()=='utc' ? -1 : 1;
-  let dx = (local||frmt=='form') ? new Date(this-sign*this.getTimezoneOffset()*60*1000) : this;
+  let dx = local ? new Date(this-sign*this.getTimezoneOffset()*60*1000) : this;
   let zone = dx.toString().split('(')[1].replace(')','');
   let zx = zone.replace(/[a-z ]/g,'');
   base = dx.toISOString();
   switch (frmt||'') {
-    case 'form': return base.split(/[TZ\.]/i).slice(0,2); break;  // values for form inputs, always local
+    case 'form': return this.style('YYYY-MM-DD hh:mm','local').split(' '); break;  // values for form inputs, always local [YYYY-MM-DD, hh:mm]
     case 'iso': return (local && sign==1) ? base.replace(/z/i,zx) : base; break; // ISO Zulu time or localtime
     case '':  // object of date field values
       let [Y,M,D,h,m,s,ms] = base.split(/[\-:\.TZ]/);
@@ -70,21 +71,22 @@ if (!Date.prototype.style) Date.prototype.style = function(frmt,local) {
     default:
       const token = /Y(?:YYY|Y)?|S[MDZ]|0?([MDNhms])\1?|[aexz]|"[^"]*"|'[^']*'/g;
       const pad = function(s) { return ('0'+s).slice(-2) };
-      let flags = dx.style(); flags['YYYY'] = flags.Y; flags['hh'] = ('0'+flags['h']).substr(0,2); if (flags['h']>12) flags['h'] %= 12;
+      let flags = dx.style(); flags['YYYY'] = flags.Y; flags['hh'] = ('0'+flags['h']).substr(-2); if (flags['h']>12) flags['h'] %= 12;
       return (frmt).replace(token, function($0) { return $0 in flags ? flags[$0] : ($0.slice(1) in flags ? pad(flags[$0.slice(1)]) : $0.slice(1,$0.length-1)); });
   };
 };
 
   
-///************************************************************
+///*************************************************************
 /// Number Object Extensions...
-///************************************************************
+///*************************************************************
 if (Number.isOdd===undefined) Number.isOdd = (n) => n % 2 ? true : false;
 if (Number.isEven===undefined) Number.isEven = (n) => !Number.isOdd(n);
 
-///************************************************************
+
+///*************************************************************
 /// Object Extensions...
-///************************************************************
+///*************************************************************
 // object equivalent of Array.prototype.map - calls user function with value, key, and source object
 if (!Object.mapByKey) Object.defineProperty(Object.prototype,'mapByKey', {
   value: 
@@ -97,23 +99,26 @@ if (!Object.mapByKey) Object.defineProperty(Object.prototype,'mapByKey', {
   enumerable: false
 })
 
-// recursively mergekeys the keys of an object into an existing objects with merged object having precedence
+// recursively merge keys of an object into an existing object with merged object having precedence
 if (!Object.mergekeys) Object.defineProperty(Object.prototype,'mergekeys', {
   value: 
     function(merged={}) {
-      const isObj = (obj) => (obj!==null) && (typeof obj==='object' && !(obj instanceof Array));
-      for (let key in merged) { 
-        if (isObj(merged[key]) && (isObj(this[key])&&(this[key]!==null))) {
-          this[key].mergekeys(merged[key]); // both objects so recursively merge keys
-        }
-        else {
-          this[key] = merged[key];  // just replace with or insert merged keys
+      const isObj = (obj) => (obj!==null) && (typeof obj==='object');
+      if (isObj(merged)) {
+        for (let key in merged) {
+          if (isObj(merged[key])) {
+            this[key] = this.key || (merged[key] instanceof Array ? [] : {}); // initialize object to prevent referencing
+            this[key].mergekeys(merged[key]); // object so recursively merge keys
+          } else {
+            this[key] = merged[key];          // just replace with or insert merged key, even if null
+          };
         };
       };
       return this; 
     },
   enumerable: false
 })
+
 
 ///************************************************************
 /// String Object Extensions...
@@ -151,16 +156,17 @@ if (!global.uniqueID) global.uniqueID = (n=8,b=36) => {let u=''; while(u.length<
 // function to determine a number of complex variable types...
 if (!global.verifyThat) global.verifyThat = (variable,isType) => {
   switch (isType) {
-    case 'isTrueObj': return (typeof variable=='object') && (variable!==null)  && !(variable instanceof Array);
+    case 'isTrueObject': return (typeof variable=='object') && (variable!==null)  && !(variable instanceof Array);
     case 'isArray': return (variable instanceof Array);
-    case 'isArrayOfObjects': return (variable instanceof Array) && verifyThat(variable[0],'isTrueObj');
+    case 'isArrayOfTrueObjects': return (variable instanceof Array) && verifyThat(variable[0],'isTrueObject');
+    case 'isArrayOfAnyObjects': return (variable instanceof Array) && (typeof variable[0]==='object');
     case 'isArrayOfArrays': return (variable instanceof Array) && (variable[0] instanceof Array);
     case 'isEmptyObject': return Object.keys(variable).length==0;
     case 'isScalar': return (typeof variable=='string') || (typeof variable=='number');
     case 'isNotEmpty': return (typeof variable=='object') && (variable!==null) && (Object.keys(variable).length>0);
     case 'isDefined' : return (variable!==undefined) && (variable!==null);
     case 'isNotDefined' : return (variable===undefined) || (variable===null);
-    default: throw "verifyThat: Unknown type specified";
+    default: throw `verifyThat: Unknown type '${isType}' specified`;
   };
 };
 
@@ -175,6 +181,9 @@ if (!Object.asJx) {
     enumerable: false
   });
 };
+
+// convert undefined, comma delimited string or array to an array...
+if (!global.asList) global.asList = x => x instanceof Array ? x : (x||'').split(',');
 
 // shortcut for debug output...
 if (!global.$) global.$ = (...args) => console.log.apply(this,args);

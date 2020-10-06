@@ -105,7 +105,7 @@ The scribe definition configures the internal transcripting for the server. By d
 
 #### Server Version
 
-An optional 'VERSION' key may be defined. It defaults to the _HomebrewLite_ file (_hbLite.js_) timestamp. It is used only in transcripting at startup and the default _x-powered-by_ header.
+An optional '$VERSION' key may be defined. It defaults to the _HomebrewLite_ file (_hbLite.js_) timestamp. It is used only in transcripting at startup and the default _x-powered-by_ header.
 
 ### Site Configuration
 
@@ -305,7 +305,7 @@ This builtin can be used to redirect requests, where the configuration defines a
 
 The terminate block performs two operations. If the secureRedirect option is defined (for an http endpoint) it will redirect the request to a secure endpoint based on the defined secureRedirect regular expression substitution. Otherwise, it will throw a 404 error to guarantee termination of the request by the error handler.
 
-The follow-up error handler provides a uniform JSON error response for all server errors in the form { error: { code: _http_status_code_, msg: _server_error_message_ }}.
+The follow-up error handler provides a uniform JSON error response for all server errors in the form { error: true, code: _http_status_code_, msg: _server_error_message_ }}.
 
 ## Homebrew Handlers
 
@@ -493,10 +493,12 @@ The LiteFile module supports file upload and download via JSON. Binary files use
       
       [
         {
-          name: <file_spec>,  // con reference a subfolder
+          name: <file_spec>,              // can reference a subfolder, but not //
+          folder: <root_folder>           // location under root
           backup: <file_spec_for_backup>, // optional, backup first if exists
-          encoding: base64 | utf8,  // utf8 default
-          contents: <file_contents> // JSON or base64 encoded JSON.
+          encoding: base64 | utf8,        // utf8 default
+          contents: <file_contents>       // JSON (i.e. JSON or string as valid JSON) or base64 encoded binary.
+          append: true | false            // optional write mode
         },
         ... // multiple files optional
       ]

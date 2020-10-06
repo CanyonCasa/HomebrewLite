@@ -63,7 +63,7 @@ exports = module.exports = Info = function Info(options) {
     // first lookup recipe based on parameter provided
     scribe.trace("INFO[%s]: %s", rqst.method, rqst.params.info);
     if (rqst.method!='GET') return next(501);
-    let ok = rqst.hb.auth.authorize(['admin','info']);
+    let ok = rqst.hb.auth.authorize('admin,server');
     let info = {};
     switch (rqst.params.info) {
       case 'ip': info = getIP(rqst); break;
@@ -72,10 +72,11 @@ exports = module.exports = Info = function Info(options) {
       case 'date': info = getDateTime(); break;
       case 'rqst': info = ok ? getRqst(rqst) : site.emsg(401); break;
       case 'stats': info = ok ? scribe.Stat.get() : site.emsg(401); break;
+      case 'history': info = 'TBD'; break;
       default:  
         let now = new Date();
         info = { ip: getIP(rqst), time: epoch(now), date: getDateTime(), 
-          request: ok?getRqst(rqst):site.emsg(401), stats: ok?scribe.Stat.get():site.emsg(401) };
+          request: ok?getRqst(rqst):site.emsg(401), stats: ok?scribe.Stat.get():site.emsg(401), history: 'TBD' };
     };
     rply.json(info);
   }

@@ -73,30 +73,35 @@ function verifyJWT(jwt,secret) {
   return jwt===check ? content.payload : null;
 };
 function expiredJWT(payload,expiration) {  // true if expired
-  let exp = new Date(payload.exp ? payload.exp : payload.iat ? 1000*payload.iat+expiration : 0);
+  let exp = new Date(payload.exp ? payload.exp : payload.iat ? 1000*(payload.iat+expiration) : 0);
   let now = new Date();
   return exp<now;
 };
 // authorize access to user based on group membership and allowed permissions...
-// memberOf is a list of groups user is a memberOf; allowed is a group name or list of groups
+// allowed and memberOf are arrays or comma separated lists of group names, allowed access and user membership respectively
 function authorize(allowed,memberOf) {
-  return (typeof allowed=='string' ? [allowed] : (allowed||[])).some(a=>(memberOf||[]).includes(a));
+  if (allowed===undefined) return true;
+  let granted = asList(allowed);
+  return asList(memberOf).includes('admin') || asList(memberOf).some(m=>granted.includes(m));
+};
+// genCode: generates unique codes for authentication verification...
+function genCode(size, base, expires) { return {code: uniqueID(size,base), iat: new Date().valueOf()/1000|0, exp: expires*60}; };
+
+// authentication by generated code...
+function checkCode(challengeCode,credentials) {
+  if (!credentials) return false;
+  let expires = new Date((credentials.iat+credentials.expiration)*1000);
+  if (expires<new Date()) return false;
+  return challengeCode===credentials.code;
 };
 
 // constructor ...
 module.exports = Auth = function Auth(cfg={}) {
   this.secret = cfg.secret || uniqueID(64,16);  // 256-bit default
-  this.expiration = (cfg.expiration || 60*24*7)*60000; // value in minutes, default to 7-days, convert to milliseconds
-  this.activation = (cfg.activation || 10)*60000; // value in minutes, default to 10 minutes, convert to milliseconds
-
-  // authentication by generated code...
-  this.codeCheck = function codeCheck(codeToCheck,validCode,expiration=this.activation) {
-    if (!validCode) return false;
-    let expires = new Date(validCode.expires ? validCode.expires*1000 : validCode.iat*1000+expiration);
-    if (expires<new Date()) return false;
-    return codeToCheck===validCode.code;
-  };
-
+  this.jwt = ({expiration: 60*24}).mergekeys(cfg.jwt || {}); // value in minutes, default to 1-day
+  this.code = {size: 7, base: 16, expiration: 10}.mergekeys(cfg.code || {});
+  this.genCode = (size=this.code.size, base=this.code.base, expires=this.code.expiration) => genCode(size,base,expires);
+  this.checkCode = checkCode;
 };
 
 // parses the basic/bearer authorization header to return login credentials
@@ -123,14 +128,13 @@ Auth.prototype.parseAuthHeader = function parseAuthHeader(header) {
 // validates user (who, parsed from authorization header) against database record (userCB)
 Auth.prototype.authenticate = async function authenticate(header,userCB) {
   // who holds all authentication info
-  let who = {user:{username:'',member:[]}, authenticated: false, error: null};
+  let who = {user:{username:'',member:''}, authenticated: false, error: null};
   who.header = this.parseAuthHeader(header);
   if (verifyThat(who.header,'isNotEmpty') && !who.header.error) {
-    if (who.header.method=='basic') {              // validate user against database
-      let user = userCB(who.header.username);       // get user data
-      if (verifyThat(user,'isNotEmpty') && (user.status=='ACTIVE')) { // check user status if defined
-        let creds = user.credentials||{};
-        who.authenticated = this.codeCheck(who.header.pw,creds.code,this.activation) || await bcrypt.compare(who.header.pw,creds.hash);
+    if (who.header.method=='basic') {             // validate user against database
+      let user = userCB(who.header.username);     // get user data
+      if (verifyThat(user,'isNotEmpty') && user.credentials.hash && (!user.status||(user.status=='ACTIVE'))) { // check user status, if defined
+        who.authenticated = checkCode(who.header.pw,user.credentials.code) || await bcrypt.compare(who.header.pw,user.credentials.hash);
         if (who.authenticated) {   // build JWT
           delete user.credentials; // remove sensitive user information
           who.user = user;
@@ -142,7 +146,7 @@ Auth.prototype.authenticate = async function authenticate(header,userCB) {
       };
     } else if (who.header.method=='bearer') {  // validate JWT
       if (who.header.payload) {  // already parsed
-        if (!expiredJWT(who.header.payload,this.expiration)) {
+        if (!expiredJWT(who.header.payload,this.jwt.expiration*60)) {
           who.user = who.header.payload;
           who.username = who.user.username;
           who.authenticated = true;
@@ -156,7 +160,7 @@ Auth.prototype.authenticate = async function authenticate(header,userCB) {
     };
   } else {
     who.error = who.header.error || null;
-  };    
+  };
   who.authorize = (allowed,member=who.user.member,auth=who.authenticated) => auth ? authorize (allowed,member) : false;
   return who
 };

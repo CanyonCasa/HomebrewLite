@@ -27,25 +27,26 @@ exports = module.exports = LiteAction = function LiteAction(options) {
   var site = this;          // local reference for context
   var scribe = site.scribe; // local reference
   scribe.info("Middleware '%s' initialized with route: %s", options.code, options.route);
-
+  var grant = options.grant || {};
+ 
   // this function called by express app for each page request...
   return function actionMiddleware(rqst, rply, next) {
     // first lookup recipe based on parameter provided
     let action = (rqst.params.action||'').toLowerCase();
     let args = ({}).mergekeys(rqst.query).mergekeys(rqst.params);
-    let admin = rqst.hb.auth.authorize(['admin']);
-    scribe.trace("ACTION[%s]: %s", rqst.method, action);
+    let admin = rqst.hb.auth.authorize('admin');
+    scribe.trace("ACTION[%s]: %s", rqst.method, action, args);
     if (rqst.method=='GET') {
       switch (action) {
         case 'grant':
-          if (!rqst.hb.auth.authorize(['admin','grant'])) return next(401);
+          if (!rqst.hb.auth.authorize('admin,grant')) return next(401);
           let user = (args.user || args.opt1 || '').split(',');
-          let exp = ((e)=>e>10080 ? 10080 : e)(args.exp || args.opt2 || 10); // limited expiration in min
+          let exp = ((e)=>e>10080 ? 10080 : e)(args.exp || args.opt2 || 30); // limited expiration in min; self-executing function
           let byMail = args.mail || args.opt2;
           let ft = (t,u)=>{return u=='d' ? (t>7?7:t)+' days' : u=='h' ? (t>24?ft(t/24,'d'):t+' hrs') : t>60? ft(t/60,'h') : t+' mins'};
           let expStr = ft(exp);
           Promise.all(user.map(u=>{
-            let code = site.generateCode('login',u,exp*60);
+            let code = rqst.hb.auth.genCode(7,36,exp);
             if (!code) return u;
             let msg =`${rqst.hb.auth.username} has granted access to...\n  user: ${u}\n  password: ${code.code}\n  valid: ${expStr}`;
             return byMail ? site.sendMail({time:true,text:msg}) : site.sendText({time:true,text:msg});
@@ -60,13 +61,9 @@ exports = module.exports = LiteAction = function LiteAction(options) {
               next(500); });
           break;
         case 'scribe':
-            if (!rqst.hb.auth.authorize(['admin','scribe'])) return next(401);
+            if (!rqst.hb.auth.authorize('admin,server')) return next(401);
             let mask = scribe.maskLevel(args.level||args.opt1);
             rply.json({msg: `Scribe mask: ${mask}`});
-          break;
-        case 'stats':     // return server statistics
-          if (!rqst.hb.auth.authorize(['admin','stats'])) return next(401);
-            rply.json(scribe.Stat.get(args.opt1,args.opt2));
           break;
         default:
           rply.json(site.server.emsg(400,`Unknown action[${rqst.method}]: ${action}!`));
@@ -74,18 +71,18 @@ exports = module.exports = LiteAction = function LiteAction(options) {
     } else if (rqst.method=='POST') {
       switch (action) {
         case 'mail':      // send email from server
-          if (!rqst.hb.auth.authorize(['admin','email'])) return next(401);
+          if (!rqst.hb.auth.authorize('admin,contact')) return next(401);
           site.sendMail(rqst.body||{})
             .then(data =>{
               let note = `Action[mail]: ${data.mail.subject} => ${data.mail.to.replace(/,.*/,', ...')}`;
-              self.scribe.info(note);
+              scribe.info(note);
               rply.json(admin ? data : note); })
             .catch(err=>{
-              scribe.error("Action[mail]: ERROR: %s", JSON.stringify(err)); 
-              rply.json(err)});
+              scribe.error("Action[mail]: ERROR: %s", err.toString()); 
+              rply.json(err.toString())});
           break;
         case 'reload':     // this function reloads a specified database.
-          if (!rqst.hb.auth.authorize(['admin','reload'])) return next(401);
+          if (!rqst.hb.auth.authorize('admin,server')) return next(401);
           let db = args.opt1 || ''
           if (db in site.db) {
             site.db[db].load()
@@ -95,21 +92,37 @@ exports = module.exports = LiteAction = function LiteAction(options) {
             rply.json(site.server.emsg(400,'No such database'));
           };
           break;
-        case 'renew':     // this function tells the proxy to reload local security files per an renewal request.
-          if (!rqst.hb.auth.authorize(['admin','renew'])) return next(401);
+        case 'renew':     // this function tells the proxy to reload local security files per a LOCAL renewal request.
+          if (!/\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}(?::\d{2,5})?/.test(rqst.host)) return next(401);  // only pass local IP rquest, which doesn't pass proxy!
           site.proxy().loadSecrets()  // proxy callback to reload certificate and key files
-            .then(exp=>rply.json({msg: "Certificate renewal request made.", expires: exp}))
+            .then(info=>{
+              let answer = { msg: `Certificate renewal request made for proxy ${info.tag} at ${info.loaded}`, expires: info.expires };
+              rply.json(answer); })
             .catch(e=>rply.json(site.server.emsg(500,e.toString())));
           break;
         case 'text':      // send a text message from server
-          if (!rqst.hb.auth.authorize(['admin','text'])) return next(401);
+          if (!rqst.hb.auth.authorize('admin,contact')) return next(401);
           site.sendText(rqst.body)
             .then(data =>{
-              scribe.debug(data.rpt);
-              rply.json(admin ? data : data.rpt); })
+              scribe.log(data.raw.report.summary);
+              rply.json(admin ? data : data.raw.report); })
             .catch(err=>{
-              scribe.error("Action[text] ERROR: %s", JSON.stringify(err)); 
+              scribe.error("Action[text] ERROR: %s", err); 
               rply.json(err)});
+          break;
+        case 'twilio':
+          if (args.opt1=='status') {
+            let msg = rqst.body;
+            if (msg.MessageStatus=='undelivered') {
+              let contact = site.cfg.$twilio.callbackContacts[args.opt2] || site.cfg.$twilio.admin;
+              site.server.sms({numbers:contact, text:`Message to ${msg.To} failed, ref: ${msg.MessageSid}`})
+                .then(data =>{ scribe.log(`Callback to ${contact} for ${msg.MessageSid}`); })
+                .catch(err=>{ scribe.error("Action[twilio] ERROR: %s", err); }); 
+            };
+            rply.send("<Response></Response>");
+          } else {
+            rply.send("<Response><Message>No one receives replies to this number!</Message></Response>");
+          };
           break;
         default:
           rply.json(site.server.emsg(400,`Unknown action[${rqst.method}]: ${action}!`));

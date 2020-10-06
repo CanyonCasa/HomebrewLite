@@ -13,7 +13,8 @@ Assumes parameter based express routing: '/\\~:recipe(\\w+)/:opt1?/:opt2?/:opt3?
 
 // load dependencies...
 require('./Extensions2JS');
-const fsp = require('fs').promises;
+const fs = require('fs');
+const fsp = fs.promises;
 const jxjDB = require('./jxjDB');
 
 exports = module.exports = Data = function Data(options) {
@@ -30,21 +31,36 @@ exports = module.exports = Data = function Data(options) {
   let dbName = options.db ? (typeof options.db=='string' ? options.db : 'local') : 'site';
   scribe.trace("Middleware '%s' connected to '%s' database (file: %s)", options.code, dbName, db.file);
   
-  // directory listing or file downloading...
+  
+  // directory listing...  recipe defines folders and constraints
+  async function list(recipe) {
+    async function recurse(root,node) {
+      let path = resolvePath(root,node);
+      try {
+        let stats = await fsp.stat(path);
+        let type = stats.isFile() ? 'file' : stats.isDirectory() ? 'dir' : 'unknown';
+        let fso = { name: node, size:stats.size, time: stats.mtime, type: type };
+        if (type == 'dir') {
+          fso.listing = [];
+          let dir = await fsp.readdir(path);
+          for (let f in dir) fso.listing.push(await recurse(path,dir[f]));
+        };
+        return fso;
+      } catch (e) { if (e.code=='ENOENT') return {name: node, listing:[], type:'unknown', notFound:true }; throw e; };
+    }; 
+    try {
+      let folders = Object.keys(recipe.folders||{});
+      return Object.fromEntries((await Promise.all(folders.map(f=>recurse(recipe.root,recipe.folders[f])))).map((x,i)=>[folders[i],x]));
+    } catch (e) { throw e.code=='ENOENT' ? 404 : e; };
+  };
+
+  // recipe defines constraints; spec provides file spec relative to document root
+  // can be used (for authorized) access to areas not openly served by static middleware
   async function download(recipe,spec) {
     try {
-      let path = resolvePath(recipe.folder,spec.replace(/\.\./g,''));
+      let path = resolvePath(recipe.root,spec.replace(/\.\./g,'')); // prevent referencing external to document root
       let stats = await fsp.stat(path);
-      if (stats.isDirectory()) {
-        if (!recipe.list) throw 403;
-        let list = await fsp.readdir(path);
-        let listing = [];
-        for (let f in list) {
-          let stat = await fsp.stat(resolvePath(path,list[f]));
-          listing.push({name: list[f], size:stat.size, time: stat.mtime, type: stat.isDirectory()?'dir':'file'});
-        };
-        return {dir: listing};
-      } else if (stats.isFile()) {
+      if (stats.isFile()) {
         if (recipe.send=='raw') {
           return {path: path};
         } else {
@@ -55,26 +71,31 @@ exports = module.exports = Data = function Data(options) {
       } else {
         throw 400;
       };
-    } catch (e) { throw e.code=='ENOENT' ? 404 : 400; };
+    } catch (e) { throw e.code=='ENOENT' ? 404 : e; };
   };
   
-  // file uploading...
+  // file uploading...  recipe defines upload constraints; data specifies an array of "file objects" to process
   async function upload(recipe,data) {
-    if (verifyThat(data,'isArrayOfObjects')) {
+    if (verifyThat(data,'isArrayOfTrueObjects')) {
       let dx = [];
       for (let f in data) {
-        let path = resolvePath(recipe.folder,data[f].name.replace(/\.\./g,''));
-        let exists = false;
-        try { await fsp.stat(path); exists=true; } catch (e) {}; // throws error if file doesn't exist - ignore
-        try {
-          if (data[f].backup && exists) {
-            let backup = resolvePath(recipe.folder,data[f].backup.replace(/\.\./g,''));
-            let cp = await fsp.copyFile(path,backup);
-          };
-          let fx = data[f].encoding=='base64' ? new Buffer.from(data[f].contents,'base64') : data[f].contents;
-          await fsp.writeFile(path,fx);
-          dx.push(true);
-        } catch (e) { scribe.debug(e); dx.push(false); };
+        let folder = data[f].folder || '';
+        if (folder && Object.keys(recipe.folders).includes(folder)) {
+          let path = resolvePath(recipe.root,recipe.folders[folder],data[f].name.replace(/\.\./g,''));
+          let exists = false;
+          try { await fsp.stat(path); exists=true; } catch (e) {}; // throws error if file doesn't exist - ignore
+          try {
+            if (data[f].backup && exists) {
+              let backup = resolvePath(recipe.root,recipe.folders[folder],data[f].backup.replace(/\.\./g,''));
+              let cp = await fsp.copyFile(path,backup);
+            };
+            let fx = data[f].format=='base64' ? new Buffer.from(data[f].contents.split(',',2)[1],'base64') : data[f].contents;
+            await fsp.writeFile(path,fx,{flag:data[f].append?'a':'w'});
+            dx.push(true);
+          } catch (e) { scribe.debug(e); dx.push(false); };
+        } else {
+          dx.push(false);
+        };
       };
       return {data:dx}
     } else {
@@ -87,14 +108,22 @@ exports = module.exports = Data = function Data(options) {
 
   // this function called by express app for each page request...
   return function fileMiddleware(rqst, rply, next) {
-    scribe.info("DATA[%s]: %s -> %s",site.tag, rqst.originalUrl, JSON.stringify(rqst.params));
+    scribe.info("FILE[%s]: %s -> %s",site.tag, rqst.originalUrl, JSON.stringify(rqst.params));
     let recipe = db.lookup(rqst.params.recipe);
     if (verifyThat(recipe,'isNotEmpty')) {
+      if (!recipe.root) return next(500);
       if (recipe.auth && !db.authorizationCheck(recipe.auth,rqst.hb.auth.user.member)) return next(401);
-      if (rqst.method==='GET'){
-        download(recipe,rqst.query.spec||'')
-          .then(d=>{ if ('path' in d) { rply.sendFile(d.path); } else { rply.json(d); }; })
-          .catch(e=>{ e!==404 ? next(e) : next(); });
+      if (rqst.method==='GET') {
+        let spec = rqst.params.opt||rqst.query.spec||'';
+        if (spec) {
+          download(recipe,spec)
+            .then(file=>{ if ('path' in file) { rply.sendFile(file.path) } else { rply.json(file); }})
+            .catch(e=>{ e!==404 ? next(e) : next(); });
+        } else {
+          list(recipe)
+            .then(listing=>{ rply.json(listing); })
+            .catch(e=>{ e!==404 ? next(e) : next(); });
+        };
       } else if (rqst.method==='POST') {
         upload(recipe,rqst.body)
           .then(d=>{ rply.json(d); })

@@ -52,6 +52,7 @@ function scalarSafe(data,filter){
       return (dflt.indexOf(data)==-1) ? dflt[0] : data;
       break;
     default:
+      if (pat.startsWith('/')) pat = new RegExp(pat.slice(1,pat.lastIndexOf('/')),pat.slice(pat.lastIndexOf('/')+1));
       if (typeof data!=='string' || !(pat instanceof RegExp)) return dflt||''; // only string data and regex pattern should remain...
       return rexSafe(data,pat,dflt); 
   };
